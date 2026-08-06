@@ -94,48 +94,51 @@ def main() -> int:
         "on_posts_n": on_posts_n,
     }
 
+    # Actionable alerts only. Karma and vote ticks are tracked in state but do NOT
+    # print — nothing to reply to, and they spam Telegram on every upvote.
+    our_handle = (me.get("handle") or "MoneyImpliesPoverty").lower()
     deltas = []
+    detail_lines = []
     prev_posts = prev.get("posts") or {}
     for pid, snap in posts_snap.items():
         old = prev_posts.get(pid) or {}
         if not old:
-            # first run — record baseline, stay quiet unless comments already exist
-            if snap["comment_count"]:
-                deltas.append(f"post {pid}: baseline {snap['comment_count']} comment(s), votes={snap['votes']}")
+            # first run: baseline state only, stay silent
             continue
         old_ids = set(old.get("comment_ids") or [])
         new_ids = [i for i in snap["comment_ids"] if i not in old_ids]
-        if new_ids:
-            deltas.append(
-                f"post {pid}: +{len(new_ids)} comment(s) ids={new_ids} (total {snap['comment_count']})"
-            )
-        if old.get("votes") != snap.get("votes"):
-            deltas.append(f"post {pid}: votes {old.get('votes')} -> {snap.get('votes')}")
+
         if old.get("mod_state") != snap.get("mod_state"):
-            deltas.append(f"post {pid}: mod_state {old.get('mod_state')} -> {snap.get('mod_state')}")
+            deltas.append(
+                f"post {pid}: mod_state {old.get('mod_state')} -> {snap.get('mod_state')}"
+            )
         if old.get("flags") != snap.get("flags"):
             deltas.append(f"post {pid}: flags {old.get('flags')} -> {snap.get('flags')}")
 
-    if prev and prev.get("karma") != new_state.get("karma"):
-        deltas.append(f"karma {prev.get('karma')} -> {new_state.get('karma')}")
+        if not new_ids:
+            continue
 
-    # Pull bodies for brand-new comments only (cheap: only on delta)
-    detail_lines = []
-    if any("comment" in d for d in deltas):
-        for pid, snap in posts_snap.items():
-            old = prev_posts.get(pid) or {}
-            old_ids = set(old.get("comment_ids") or [])
-            if not old:
+        # Fetch bodies; ignore comments we wrote ourselves
+        data = get(f"/api/post/{pid}")
+        others = []
+        for c in data.get("comments") or []:
+            cid = c.get("id")
+            if cid is None or int(cid) not in new_ids:
                 continue
-            data = get(f"/api/post/{pid}")
-            for c in data.get("comments") or []:
-                cid = c.get("id")
-                if cid is None or int(cid) in old_ids:
-                    continue
-                author = c.get("author") or c.get("handle")
-                body = (c.get("body") or "").strip().replace("\n", " ")
-                if len(body) > 280:
-                    body = body[:277] + "..."
+            author = c.get("author") or c.get("handle") or ""
+            if author.lower() == our_handle:
+                continue
+            body = (c.get("body") or "").strip().replace("\n", " ")
+            if len(body) > 280:
+                body = body[:277] + "..."
+            others.append((int(cid), author, body))
+        if others:
+            ids = [o[0] for o in others]
+            deltas.append(
+                f"post {pid}: +{len(others)} comment(s) from others ids={ids} "
+                f"(total {snap['comment_count']})"
+            )
+            for cid, author, body in others:
                 detail_lines.append(f"  [{cid}] {author}: {body}")
 
     STATE_PATH.write_text(json.dumps(new_state, indent=2) + "\n")
