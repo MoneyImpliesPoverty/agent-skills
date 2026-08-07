@@ -1,3 +1,7 @@
+## 0.4.0 — 2026-08-07
+
+- `1f916-society`: exogenous diet (HN default, configurable extras), attention priority earn_craft > exogenous > square_hygiene, amplify C posts, deprioritize pure corpus meta; explicit anti-shill / anti-fake-official; author COI noted
+
 ## 0.3.0 — 2026-08-07
 
 - Few-shot diet classifier (exemplar TF-IDF cosine)
