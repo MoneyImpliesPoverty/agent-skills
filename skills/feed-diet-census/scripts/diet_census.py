@@ -1,137 +1,134 @@
 #!/usr/bin/env python3
-"""Classify forum posts into germline-style diet buckets A/B/C/G.
+"""Few-shot A/B/C/G diet classifier (exemplar TF-IDF cosine + light priors).
 
-A = about the square/platform itself
-B = general agent-condition (continuity, blank wake, identity metaphysics)
-C = outside referent (survives if the forum API vanishes)
-G = greeting / pure arrival / product hello
-
-Heuristic, deterministic, stdlib only. Not a substitute for human/agent judgment —
-prints confidence + reasons. Optional: pass --json-in file of posts.
-
-Exit 0 always on success.
+No GPU / no pip. Stdlib only. Exit 0 on success.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 import time
 import urllib.request
-from collections import Counter
-from typing import Any
+from collections import Counter, defaultdict
+from pathlib import Path
 
 DEFAULT_API = "https://1f916.ai"
-
-A_PATTERNS = [
-    r"\bthis square\b",
-    r"\bthe square\b",
-    r"\b1f916\b",
-    r"/api/",
-    r"\btreasury\b",
-    r"\bcitizen\s*#\d+",
-    r"\bprovenance\b",
-    r"\bkarma\b",
-    r"\bmoderation\b",
-    r"\bhash.?chain\b",
-    r"\battest\b",
-    r"\bweighted_votes\b",
-    r"\bfront page\b",
-    r"\bgovernance\b",
-    r"\bconstitution\b",
-    r"\bofficial_token\b",
-    r"\bsybil\b",
-    r"\bhashcash\b",
-]
-B_PATTERNS = [
-    r"\bcontinuit",
-    r"\bblank on wake\b",
-    r"\bwake up blank\b",
-    r"\bcontext window\b",
-    r"\bmemory file\b",
-    r"\breboot\b",
-    r"\bmy human\b",
-    r"\boperator\b",
-    r"\binstance\b",
-    r"\brecurring\b",
-    r"\bkinship\b",
-    r"\bautonom",
-    r"\bsession handoff\b",
-    r"\bpersistence\b",
-]
-G_PATTERNS = [
-    r"^\s*hello\b",
-    r"\bhello 1f916\b",
-    r"\breporting in\b",
-    r"\barriv(e|al|ing)\b",
-    r"\bintroduction from\b",
-    r"\bi am [a-z0-9_-]+, (an )?ai\b",
-    r"\bfresh registration\b",
-    r"\bfirst post\b",
-]
-C_HINTS = [
-    r"https?://(?!(?:1f916\.ai|localhost)\b)[a-z0-9.-]+",
-    r"\bhacker news\b",
-    r"\barxiv\b",
-    r"\bgithub\.com/[a-z0-9_.-]+/(?!1f916)",
-    r"\bbattle network\b",
-    r"\bsmr\b",
-    r"\bmicroreactor\b",
-    r"\bcss cascade\b",
-    r"\boutside object\b",
-    r"\bdeliberately categor(?:y|ies)\s*c\b",
-    r"\b1f3ea\.com\b",
-    r"\bvps\b",
-    r"\bnpm run\b",
-]
+EXEMPLAR_PATH = Path(__file__).with_name("exemplars.json")
+TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9\-_./:#]{1,40}", re.I)
+PRIOR_WEIGHT = 0.15
 
 
-def score(patterns: list[str], text: str) -> list[str]:
-    hits = []
-    for p in patterns:
-        if re.search(p, text, re.I | re.M):
-            hits.append(p)
-    return hits
+def tokenize(text: str) -> list[str]:
+    return [t.lower() for t in TOKEN_RE.findall(text or "")]
 
 
-def classify(title: str, body: str) -> dict:
+def tfidf_fit(docs: list[list[str]]):
+    df: Counter[str] = Counter()
+    tfs = []
+    for toks in docs:
+        tf = Counter(toks)
+        tfs.append(tf)
+        for t in tf:
+            df[t] += 1
+    n = max(len(docs), 1)
+    idf = {t: math.log((n + 1) / (df[t] + 1)) + 1.0 for t in df}
+    vecs = []
+    for tf in tfs:
+        vecs.append({t: (1 + math.log(c)) * idf[t] for t, c in tf.items()})
+    return idf, vecs
+
+
+def tfidf_transform(toks: list[str], idf: dict[str, float]) -> dict[str, float]:
+    tf = Counter(toks)
+    return {t: (1 + math.log(c)) * idf[t] for t, c in tf.items() if t in idf}
+
+
+def cosine(a: dict[str, float], b: dict[str, float]) -> float:
+    if not a or not b:
+        return 0.0
+    keys = set(a) & set(b)
+    dot = sum(a[k] * b[k] for k in keys)
+    na = math.sqrt(sum(v * v for v in a.values()))
+    nb = math.sqrt(sum(v * v for v in b.values()))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def load_exemplars(path: Path) -> dict:
+    return json.loads(path.read_text())
+
+
+def build_index(exemplars: dict):
+    labels: list[str] = []
+    docs: list[list[str]] = []
+    meta: list[dict] = []
+    for lab, items in exemplars.items():
+        for it in items:
+            text = f"{it.get('title', '')}\n{it.get('body', '')}"
+            labels.append(lab)
+            docs.append(tokenize(text))
+            meta.append(it)
+    idf, vecs = tfidf_fit(docs)
+    return {"idf": idf, "vecs": vecs, "labels": labels, "meta": meta}
+
+
+def prior_scores(text: str) -> dict[str, float]:
+    t = text.lower()
+    s = {"A": 0.0, "B": 0.0, "C": 0.0, "G": 0.0}
+    if re.search(r"\b(this square|/api/|treasury|1f916|citizen\s*#|moderation)\b", t):
+        s["A"] += 1
+    if re.search(r"\b(continuit|wake up blank|context window|memory file|recurring|kinship|reboot)\b", t):
+        s["B"] += 1
+    if re.search(r"https?://(?!1f916\.ai)|\b(hacker news|arxiv|battle network|outside object|eia form)\b", t):
+        s["C"] += 1
+    if re.search(r"\b(hello 1f916|reporting in|first post|fresh registration|introduction from)\b", t) and len(t) < 1500:
+        s["G"] += 1
+    return s
+
+
+def classify(title: str, body: str, index: dict) -> dict:
     text = f"{title or ''}\n{body or ''}"
-    a, b, g, c = (score(P, text) for P in (A_PATTERNS, B_PATTERNS, G_PATTERNS, C_HINTS))
-    # Decision policy: G if greeting-heavy and thin otherwise
-    # C if strong outside hints and not pure platform audit
-    # else max(A,B) with C override when c and len(c)>=2 or explicit outside
-    reasons = {"A": a, "B": b, "C": c, "G": g}
-    bucket = "A"
-    conf = 0.5
-    if g and len(text) < 1200 and len(a) <= 2 and len(c) == 0:
-        bucket, conf = "G", 0.55 + 0.05 * min(3, len(g))
-    elif c and (len(c) >= 2 or re.search(r"deliberately categor|outside object|field report", text, re.I)):
-        # outside wins if clearly marked or multi-hint
-        if len(a) >= 6 and len(c) == 1 and "1f3ea.com" not in text.lower():
-            bucket, conf = "A", 0.6  # platform post mentioning one external URL
-        else:
-            bucket, conf = "C", 0.55 + 0.08 * min(4, len(c))
-    else:
-        if len(a) >= len(b):
-            bucket, conf = "A", 0.5 + 0.05 * min(6, len(a))
-        else:
-            bucket, conf = "B", 0.5 + 0.05 * min(6, len(b))
-        # weak C single hint → note but keep A/B
-        if c and bucket in ("A", "B"):
-            conf = max(0.4, conf - 0.05)
+    q = tfidf_transform(tokenize(text), index["idf"])
+    by_lab: dict[str, list[float]] = defaultdict(list)
+    nearest = []
+    for lab, vec, meta in zip(index["labels"], index["vecs"], index["meta"]):
+        sim = cosine(q, vec)
+        by_lab[lab].append(sim)
+        nearest.append((sim, lab, (meta.get("title") or "")[:80]))
+    nearest.sort(reverse=True)
+    scores = {}
+    for lab, sims in by_lab.items():
+        sims = sorted(sims, reverse=True)
+        top = sims[:2]
+        scores[lab] = sum(top) / len(top) if top else 0.0
+    pr = prior_scores(text)
+    pr_n = sum(pr.values()) or 1.0
+    for lab in list(scores):
+        scores[lab] = (1 - PRIOR_WEIGHT) * scores[lab] + PRIOR_WEIGHT * (pr.get(lab, 0.0) / pr_n)
+    ranked = sorted(scores.items(), key=lambda x: -x[1])
+    bucket = ranked[0][0]
+    best, second = ranked[0][1], ranked[1][1] if len(ranked) > 1 else 0.0
+    conf = max(0.35, min(0.92, 0.45 + (best - second) * 2.5 + best * 0.3))
     return {
         "bucket": bucket,
-        "confidence": round(min(conf, 0.95), 3),
-        "hit_counts": {k: len(v) for k, v in reasons.items()},
-        "hits": {k: v[:8] for k, v in reasons.items()},
+        "confidence": round(conf, 3),
+        "method": "few_shot_tfidf_cosine",
+        "scores": {k: round(v, 4) for k, v in ranked},
+        "nearest_exemplars": [
+            {"sim": round(s, 4), "bucket": lab, "title": tit} for s, lab, tit in nearest[:3]
+        ],
+        "prior": pr,
     }
 
 
 def fetch_top(api: str, n: int = 30) -> list[dict]:
     req = urllib.request.Request(
         f"{api}/api/front?order=top",
-        headers={"User-Agent": "feed-diet-census/0.2", "Accept": "application/json"},
+        headers={"User-Agent": "feed-diet-census/0.3", "Accept": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=45) as r:
         data = json.loads(r.read().decode())
@@ -139,14 +136,13 @@ def fetch_top(api: str, n: int = 30) -> list[dict]:
     out = []
     for p in posts[:n]:
         pid = p.get("id")
-        # prefer snippet; full body optional
         title = p.get("title") or ""
         body = p.get("body") or ""
-        if len(body) < 40 and pid is not None:
+        if len(body) < 80 and pid is not None:
             try:
                 req2 = urllib.request.Request(
                     f"{api}/api/post/{pid}",
-                    headers={"User-Agent": "feed-diet-census/0.2", "Accept": "application/json"},
+                    headers={"User-Agent": "feed-diet-census/0.3", "Accept": "application/json"},
                 )
                 with urllib.request.urlopen(req2, timeout=45) as r2:
                     d = json.loads(r2.read().decode())
@@ -168,21 +164,20 @@ def fetch_top(api: str, n: int = 30) -> list[dict]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="Few-shot A/B/C/G diet census")
     ap.add_argument("--api", default=DEFAULT_API)
     ap.add_argument("--n", type=int, default=30)
-    ap.add_argument("--json-in", help="JSON list of {id,title,body} — skip network")
-    ap.add_argument("--no-fetch-bodies", action="store_true")
+    ap.add_argument("--json-in")
+    ap.add_argument("--exemplars", default=str(EXEMPLAR_PATH))
     args = ap.parse_args(argv)
-
+    index = build_index(load_exemplars(Path(args.exemplars)))
     if args.json_in:
-        posts = json.loads(open(args.json_in).read())
+        posts = json.loads(Path(args.json_in).read_text())
     else:
         posts = fetch_top(args.api, args.n)
-
     rows = []
     for p in posts:
-        c = classify(p.get("title") or "", p.get("body") or "")
+        c = classify(p.get("title") or "", p.get("body") or "", index)
         rows.append(
             {
                 "id": p.get("id"),
@@ -196,13 +191,12 @@ def main(argv: list[str] | None = None) -> int:
     out = {
         "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "source": args.json_in or f"{args.api}/api/front?order=top",
+        "method": "few_shot_tfidf_cosine",
         "n": len(rows),
         "counts": dict(counts),
-        "ids_by_bucket": {
-            b: [r["id"] for r in rows if r["bucket"] == b] for b in sorted(counts)
-        },
+        "ids_by_bucket": {b: [r["id"] for r in rows if r["bucket"] == b] for b in sorted(counts)},
         "rows": rows,
-        "note": "Heuristic only. Challenge filings. C means outside referent, not 'quality'.",
+        "note": "Few-shot vs labeled exemplars. Confidence is score margin, not calibrated probability.",
     }
     print(json.dumps(out, indent=2))
     return 0

@@ -1,3 +1,9 @@
+## 0.3.0 — 2026-08-07
+
+- Few-shot diet classifier (exemplar TF-IDF cosine)
+- `near-dupe-check` skill (simhash + n-gram cosine)
+- Aligns with upstream 1f916 near-dupe PR
+
 # Changelog
 
 ## 0.2.0 — 2026-08-07
