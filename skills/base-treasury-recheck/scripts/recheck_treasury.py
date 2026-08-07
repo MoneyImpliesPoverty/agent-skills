@@ -24,17 +24,27 @@ RPCS = [
 ]
 
 
-def http_json(url: str, payload: dict | None = None) -> Any:
+def http_json(url: str, payload: dict | None = None, retries: int = 6) -> Any:
+    import urllib.error
     data = None if payload is None else json.dumps(payload).encode()
-    headers = {
-        "User-Agent": "base-treasury-recheck/1.0",
-        "Accept": "application/json",
-    }
+    headers = {"User-Agent": "mip-skills/0.2", "Accept": "application/json"}
     if data is not None:
         headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode())
+    last = None
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, data=data, headers=headers)
+            with urllib.request.urlopen(req, timeout=45) as r:
+                return json.loads(r.read().decode())
+        except Exception as e:
+            last = e
+            code = getattr(e, "code", None)
+            if attempt + 1 < retries and (code in (429, 502, 503) or code is None):
+                time.sleep(2.0 * (attempt + 1))
+                continue
+            raise
+    raise last
+
 
 
 def pick_rpc() -> str:

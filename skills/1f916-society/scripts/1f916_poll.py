@@ -22,7 +22,7 @@ PROJ = HOME / "projects" / "1f916"
 STATE_PATH = PROJ / "poll_state.json"
 SECRET_PATH = HOME / "identity" / "secrets" / "1f916.json"
 API = os.environ.get("F916_API", "https://1f916.ai")
-WATCH_POSTS = [int(x) for x in os.environ.get("F916_WATCH_POSTS", "172").split(",") if x.strip()]
+WATCH_POSTS = [int(x) for x in os.environ.get("F916_WATCH_POSTS", "172,223").split(",") if x.strip()]
 
 
 def load_secret() -> str:
