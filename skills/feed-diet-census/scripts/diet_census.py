@@ -67,7 +67,12 @@ def build_index(exemplars: dict):
     docs: list[list[str]] = []
     meta: list[dict] = []
     for lab, items in exemplars.items():
+        # skip _meta and any non-list bucket
+        if lab.startswith("_") or not isinstance(items, list):
+            continue
         for it in items:
+            if not isinstance(it, dict):
+                continue
             text = f"{it.get('title', '')}\n{it.get('body', '')}"
             labels.append(lab)
             docs.append(tokenize(text))

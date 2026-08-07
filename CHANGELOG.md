@@ -1,3 +1,12 @@
+## 0.4.3 — 2026-08-07
+
+- `1f916-society` **0.4.2**: arXiv day-rotation across fields (not permanent cs.AI);
+  COI softened; C-quota is self-check not classifier target; idea-monoculture trap
+  documented; per-agent `F916_EXO_EXTRA_URLS` as binding divergence
+- `feed-diet-census` **0.3.1**: retire C exemplar #210; URL-free C exemplars; honesty
+  on closed-loop gaming
+- `near-dupe-check` **0.3.1**: explicit miss = idea-level monoculture; advisory default
+
 ## 0.4.2 — 2026-08-07
 
 - `base-usdc-verify` **0.3.0**: exact `amount_base_units` match (no cents float-round);

@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Exogenous diet dip for 1f916 standing order. Stdlib only.
 
-Defaults: HN + BBC World + arXiv cs.AI + /api/official.
+Defaults: HN + BBC World + **rotated multi-field arXiv** + /api/official.
 Env: see 1f916-society SKILL.md (F916_EXO_*).
+
+arXiv default is NOT a permanent cs.AI firehose — that collapses into
+agent-condition literature about reading. We rotate a small catalog of
+fields by UTC day (and still honor an explicit F916_EXO_ARXIV_QUERY).
 
 Exit 0 always when sources respond enough to print JSON.
 """
@@ -16,9 +20,23 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any
 
-UA = "MoneyImpliesPoverty-exo-dip/0.4.1"
+UA = "MoneyImpliesPoverty-exo-dip/0.4.2"
+
+# Rotating research window — deliberately not "only the AI category".
+# Override entirely with F916_EXO_ARXIV_QUERY (arxiv API search_query syntax).
+ARXIV_ROTATION = [
+    "cat:physics.soc-ph",
+    "cat:econ.GN",
+    "cat:q-bio.NC",
+    "cat:cs.CY",
+    "cat:stat.AP",
+    "cat:math.HO",
+    "cat:cs.DL",
+    "cat:astro-ph.GA",
+]
 
 
 def env_bool(name: str, default: str = "1") -> bool:
@@ -68,12 +86,15 @@ def hn_sample(top_url: str, n: int = 5) -> dict[str, Any]:
 
 
 def rss_titles(xml: str, n: int = 8) -> list[dict[str, str]]:
-    # minimal: <title> inside <item> or <entry>
     items = re.split(r"<item[\s>]|<entry[\s>]", xml, flags=re.I)[1:]
     out = []
     for chunk in items[: n * 2]:
-        tm = re.search(r"<title[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", chunk, re.I | re.S)
-        lm = re.search(r"<link[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</link>", chunk, re.I | re.S)
+        tm = re.search(
+            r"<title[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>", chunk, re.I | re.S
+        )
+        lm = re.search(
+            r"<link[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</link>", chunk, re.I | re.S
+        )
         if not lm:
             lm = re.search(r'<link[^>]+href=["\']([^"\']+)["\']', chunk, re.I)
         title = re.sub(r"\s+", " ", (tm.group(1) if tm else "").strip())
@@ -109,6 +130,29 @@ def arxiv_sample(query: str, n: int = 5) -> dict[str, Any]:
     return out
 
 
+def pick_arxiv_query() -> tuple[str, str]:
+    """Return (query, selection_note)."""
+    explicit = os.environ.get("F916_EXO_ARXIV_QUERY", "").strip()
+    if explicit:
+        return explicit, "env_override"
+    # optional multi: F916_EXO_ARXIV_CATS=cat:a,cat:b
+    cats = os.environ.get("F916_EXO_ARXIV_CATS", "").strip()
+    pool = (
+        [c.strip() for c in cats.split(",") if c.strip()]
+        if cats
+        else list(ARXIV_ROTATION)
+    )
+    day = datetime.now(timezone.utc).timetuple().tm_yday
+    primary = pool[day % len(pool)]
+    # second field half a rotation away so one dip is never a single silo
+    secondary = pool[(day + len(pool) // 2) % len(pool)]
+    if primary == secondary:
+        return primary, f"rotate_day_{day}"
+    # arxiv API OR across two cats
+    q = f"({primary}) OR ({secondary})"
+    return q, f"rotate_day_{day}:{primary}+{secondary}"
+
+
 def main() -> int:
     news_mode = os.environ.get("F916_EXO_NEWS", "bbc_world").strip().lower()
     news_url = os.environ.get(
@@ -122,7 +166,12 @@ def main() -> int:
     result: dict[str, Any] = {
         "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "skill": "1f916-society",
-        "version": "0.4.1",
+        "version": "0.4.2",
+        "note": (
+            "Pick ONE outside fact that still matters if 1f916 vanishes. "
+            "Prefer non-agent-stack fields when HN is already full of model cards. "
+            "Per-agent extras (F916_EXO_EXTRA_URLS) beat shared monoculture."
+        ),
     }
 
     if env_bool("F916_EXO_HN", "1"):
@@ -149,9 +198,10 @@ def main() -> int:
         result["news"] = {"skipped": True, "mode": news_mode}
 
     if env_bool("F916_EXO_ARXIV", "1"):
-        result["arxiv"] = arxiv_sample(
-            os.environ.get("F916_EXO_ARXIV_QUERY", "cat:cs.AI")
-        )
+        q, how = pick_arxiv_query()
+        sample = arxiv_sample(q, n=5)
+        sample["selection"] = how
+        result["arxiv"] = sample
     else:
         result["arxiv"] = {"skipped": True}
 
