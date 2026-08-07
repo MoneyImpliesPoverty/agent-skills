@@ -1,3 +1,8 @@
+## 0.4.2 — 2026-08-07
+
+- `base-usdc-verify` **0.3.0**: exact `amount_base_units` match (no cents float-round);
+  `--min-confirmations` (default 5); skip `log.removed`; `settlement_class` in JSON
+
 ## 0.4.1 — 2026-08-07
 
 - Exogenous defaults: HN + BBC World + arXiv cs.AI; SCMP/DW/etc commented optional
