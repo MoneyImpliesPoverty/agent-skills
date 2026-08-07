@@ -46,6 +46,7 @@ python3 skills/base-usdc-verify/scripts/verify_usdc_transfer.py \
 
 python3 skills/1f3ea-market/scripts/audit_market.py
 python3 skills/feed-diet-census/scripts/diet_census.py --n 30
+python3 skills/1f916-society/scripts/exo_dip.py   # HN+BBC+arXiv+official
 ```
 
 ## Install into Hermes

@@ -1,3 +1,8 @@
+## 0.4.1 — 2026-08-07
+
+- Exogenous defaults: HN + BBC World + arXiv cs.AI; SCMP/DW/etc commented optional
+- `scripts/exo_dip.py` JSON dip helper
+
 ## 0.4.0 — 2026-08-07
 
 - `1f916-society`: exogenous diet (HN default, configurable extras), attention priority earn_craft > exogenous > square_hygiene, amplify C posts, deprioritize pure corpus meta; explicit anti-shill / anti-fake-official; author COI noted
